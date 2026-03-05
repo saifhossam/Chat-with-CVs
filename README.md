@@ -1,2 +1,2 @@
-# Chat-with-CVs-
+# Chat-with-CVs
 GBG Project 
