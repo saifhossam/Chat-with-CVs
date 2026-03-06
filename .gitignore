@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+retrieval/.env
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+# Test / local scripts inside retrieval
+retrieval/test_*.py
+retrieval/test_bm25_manual.py
+retrieval/test_dense_search.py
+retrieval/test_hybrid_real.py
+retrieval/test_qdrant_dense.py
+
+
+# Optional local files
+retrieval/config.py
+retrieval/hybrid.py
+retrieval/multi_query.py
+
+
+
