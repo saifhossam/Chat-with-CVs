@@ -1,117 +1,170 @@
 from pathlib import Path
 from tqdm import tqdm
 import re
+import json
 
 from langchain_community.document_loaders import PyPDFLoader
 
-# Header detection pattern (capitalized lines, typical CV headers)
-HEADER_PATTERN = re.compile(r"^[A-Z][A-Za-z0-9 &\-]+$")
 
-# Maximum characters per semantic chunk (adjust for embeddings / LLM context)
-MAX_CHUNK_SIZE = 500  # e.g., ~500 characters per chunk
-CHUNK_OVERLAP = 50    # overlap between chunks to preserve context
+# Detect common CV headers
+HEADER_PATTERN = re.compile(
+    r"^(SUMMARY|PROFESSIONAL SUMMARY|PROFILE|ABOUT ME|OBJECTIVE|CAREER OBJECTIVE|"
+    r"EXPERIENCE|WORK EXPERIENCE|PROFESSIONAL EXPERIENCE|EMPLOYMENT HISTORY|WORK HISTORY|"
+    r"EDUCATION|ACADEMIC BACKGROUND|EDUCATIONAL BACKGROUND|"
+    r"SKILLS|SOFT SKILLS|HARD SKILLS|TECHNICAL SKILLS|CORE SKILLS|KEY SKILLS|SKILL SET|COMPETENCIES|CORE COMPETENCIES|"
+    r"PROJECTS|PERSONAL PROJECTS|ACADEMIC PROJECTS|PROJECT EXPERIENCE|"
+    r"CERTIFICATIONS|LICENSES|CERTIFICATES|PROFESSIONAL CERTIFICATIONS|"
+    r"PUBLICATIONS|RESEARCH|RESEARCH EXPERIENCE|"
+    r"ACHIEVEMENTS|KEY ACHIEVEMENTS|ACCOMPLISHMENTS|AWARDS|HONORS|"
+    r"LEADERSHIP|LEADERSHIP EXPERIENCE|"
+    r"VOLUNTEERING|VOLUNTEER EXPERIENCE|COMMUNITY SERVICE|"
+    r"INTERNSHIPS|INTERNSHIP EXPERIENCE|"
+    r"LANGUAGES|LANGUAGE SKILLS|"
+    r"INTERESTS|HOBBIES|PASSIONS|EXTRACURRICULAR ACTIVITIES|"
+    r"PROFESSIONAL AFFILIATIONS|MEMBERSHIPS|"
+    r"REFERENCES)$",
+    re.IGNORECASE
+)
 
 
 def split_into_sections(text):
-    """
-    Header-aware section splitting.
-    Returns a dict: {section_name: text}
-    """
+
+
     sections = {}
     current_section = "general"
     sections[current_section] = []
 
     for line in text.split("\n"):
+
         clean = line.strip()
+
         if HEADER_PATTERN.match(clean):
             current_section = clean.lower()
             sections[current_section] = []
+
         else:
             sections[current_section].append(line)
 
-    # Join lines
-    return {sec: "\n".join(lines).strip() for sec, lines in sections.items() if "\n".join(lines).strip()}
+    return {
+        sec: "\n".join(lines).strip()
+        for sec, lines in sections.items()
+        if "\n".join(lines).strip()
+    }
+
+def split_section_entries(section_text):
 
 
-def semantic_chunk_text(text, max_size=MAX_CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """
-    Split text into semantic chunks for embeddings / RAG.
-    Splits by paragraphs first, then by size if too long.
-    """
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    chunks = []
-    current_chunk = ""
+    entries = []
+    buffer = []
 
-    for p in paragraphs:
-        if len(current_chunk) + len(p) + 1 <= max_size:
-            current_chunk += (p + "\n")
-        else:
-            # Save current chunk
-            chunks.append(current_chunk.strip())
-            # Start new chunk with overlap
-            overlap_text = current_chunk[-overlap:] if overlap < len(current_chunk) else current_chunk
-            current_chunk = overlap_text + p + "\n"
+    lines = section_text.split("\n")
 
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
+    for line in lines:
 
-    return chunks
+        clean = line.strip()
+
+        if not clean:
+            if buffer:
+                entries.append("\n".join(buffer).strip())
+                buffer = []
+            continue
+
+        # bullet point
+        if clean.startswith(("•", "-", "*")):
+
+            bullet_text = clean.lstrip("•-* ").strip()
+
+            if bullet_text:
+                if buffer:
+                    entries.append("\n".join(buffer).strip())
+                    buffer = []
+
+                entries.append(bullet_text)
+
+            continue
+
+        # detect job / entry titles (common CV patterns)
+        if re.search(r"( at | - | — | \| )", clean) and len(clean) < 120:
+            if buffer:
+                entries.append("\n".join(buffer).strip())
+                buffer = []
+
+            entries.append(clean)
+            continue
+
+        buffer.append(clean)
+
+    if buffer:
+        entries.append("\n".join(buffer).strip())
+
+    # remove very short noise chunks
+    return [e for e in entries if len(e) > 3]
 
 
 def run_cv_rag_chunking(folder_path):
-    """
-    Processes all PDFs in folder_path into header-aware + semantic chunks.
-    Returns list of dicts with page_content and metadata.
-    """
+
     all_chunks = []
+
     pdf_files = list(Path(folder_path).glob("*.pdf"))
 
     if not pdf_files:
-        print("⚠️ No PDFs found.")
+        print("⚠️ No PDFs found in folder.")
         return []
 
     for pdf_path in tqdm(pdf_files, desc="Processing CVs"):
-        print(f"\n📄 Processing {pdf_path.name}")
+
+        print(f"📄 Processing: {pdf_path.name}")
 
         loader = PyPDFLoader(str(pdf_path))
         docs = loader.load()
 
-        # Merge all pages into one text
         full_text = "\n".join([d.page_content for d in docs])
 
-        # Header-aware section splitting
         sections = split_into_sections(full_text)
 
+        chunk_id = 0
+
         for section_name, section_text in sections.items():
-            # Semantic chunking for each section
-            section_chunks = semantic_chunk_text(section_text)
-            for chunk_text in section_chunks:
-                all_chunks.append({
-                    "page_content": chunk_text,
+
+            entries = split_section_entries(section_text)
+
+            for entry in entries:
+
+                chunk_id += 1
+
+                chunk = {
+                    "page_content": entry,
                     "metadata": {
                         "candidate_name": pdf_path.stem,
+                        "source_file": pdf_path.name,
                         "section": section_name,
-                        "source_file": pdf_path.name
+                        "chunk_id": chunk_id,
+                        "chunk_type": "cv_entry"
                     }
-                })
+                }
+
+                all_chunks.append(chunk)
 
     return all_chunks
 
 
-def inspect_chunks(chunks, preview_chars=300):
-    print("\n" + "="*50)
-    print(f"Total Chunks: {len(chunks)}")
-    print("="*50)
+def save_chunks_to_json(chunks, output_file="cv_chunks.json"):
+    """
+    Save all chunks into a formatted JSON file.
+    """
 
-    for i, chunk in enumerate(chunks[:5]):
-        print(f"\n--- CHUNK {i+1} ---")
-        print("Metadata:", chunk["metadata"])
-        print("Content Preview:\n", chunk["page_content"][:preview_chars])
-        print("-"*30)
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(chunks, f, indent=4, ensure_ascii=False)
+
+    print("\n✅ Chunks saved successfully!")
+    print(f"📁 File: {output_file}")
+    print(f"🧠 Total Chunks: {len(chunks)}")
 
 
-# Example usage
 if __name__ == "__main__":
-    folder = "cv" 
+
+    folder = "cv"
+
     chunks = run_cv_rag_chunking(folder)
-    inspect_chunks(chunks)
+
+    save_chunks_to_json(chunks)
