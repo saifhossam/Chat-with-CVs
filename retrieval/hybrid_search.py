@@ -1,66 +1,8 @@
 from typing import Any
-
 from qdrant_client import QdrantClient
 
-from retrieval.config import RAGConfig
 from retrieval.bm25 import bm25_search
-
-
-def _get_cfg_int(cfg: RAGConfig, field_name: str, default: int) -> int:
-    """
-    Read integer config safely with fallback.
-    """
-    value = getattr(cfg, field_name, default)
-    try:
-        value = int(value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _payload_to_chunk(payload: dict[str, Any], fallback_chunk_id: str = "") -> dict[str, Any]:
-    """
-    Normalize Qdrant payload into a generic chunk dict.
-    """
-    return {
-        "chunk_id": payload.get("chunk_id", fallback_chunk_id),
-        "text": payload.get("text", ""),
-        "candidate_id": payload.get("candidate_id", ""),
-        "candidate_name": payload.get("candidate_name", ""),
-        "section": payload.get("section", ""),
-        "page_number": _safe_int(payload.get("page_number", 0), 0),
-    }
-
-
-def _normalize_chunk(item: Any, fallback_chunk_id: str = "") -> dict[str, Any]:
-    """
-    Normalize either dict-chunk or object-chunk into one stable shape.
-    """
-    if isinstance(item, dict):
-        return {
-            "chunk_id": item.get("chunk_id", fallback_chunk_id),
-            "text": item.get("text", ""),
-            "candidate_id": item.get("candidate_id", ""),
-            "candidate_name": item.get("candidate_name", ""),
-            "section": item.get("section", ""),
-            "page_number": _safe_int(item.get("page_number", 0), 0),
-        }
-
-    return {
-        "chunk_id": getattr(item, "chunk_id", fallback_chunk_id),
-        "text": getattr(item, "text", ""),
-        "candidate_id": getattr(item, "candidate_id", ""),
-        "candidate_name": getattr(item, "candidate_name", ""),
-        "section": getattr(item, "section", ""),
-        "page_number": _safe_int(getattr(item, "page_number", 0), 0),
-    }
+from retrieval.config import RAGConfig
 
 
 def dense_search(
@@ -68,62 +10,49 @@ def dense_search(
     cfg: RAGConfig,
     query_vec: list[float],
     topn: int,
-) -> list[tuple[str, float, dict[str, Any]]]:
-    """
-    Dense vector search from Qdrant.
+) -> list[tuple[str, float, dict[str, Any]]]:  # (chunk_id, score, payload)
 
-    Returns:
-        list of (chunk_id, dense_score, payload)
-    """
     if not query_vec:
         return []
 
     response = client.query_points(
         collection_name=cfg.qdrant_collection,
         query=query_vec,
-        using="dense",
         limit=topn,
         with_payload=True,
         with_vectors=False,
     )
 
     points = getattr(response, "points", None) or []
+    results = []
 
-    hits: list[tuple[str, float, dict[str, Any]]] = []
     for point in points:
         payload = point.payload or {}
-        chunk_id = payload.get("chunk_id") or str(point.id)
-        score = float(point.score)
 
+        chunk_id = payload.get("chunk_id") or str(point.id)
         if not chunk_id:
             continue
 
-        hits.append((chunk_id, score, payload))
+        results.append((chunk_id, float(point.score), payload))
 
-    return hits
+    return results
 
 
 def rrf_fuse(
     dense_hits: list[tuple[str, float, dict[str, Any]]],
     bm25_hits: list[tuple[str, float]],
-    rrf_k: int = 60,
+    rrf_k: int,
 ) -> dict[str, float]:
-    """
-    Reciprocal Rank Fusion over dense and BM25 rankings.
 
-    Uses rank only, not raw scores.
-    """
-    fused_scores: dict[str, float] = {}
+    fused = {}
 
     for rank, (chunk_id, _, _) in enumerate(dense_hits, start=1):
-        if chunk_id:
-            fused_scores[chunk_id] = fused_scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+        fused[chunk_id] = fused.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
 
     for rank, (chunk_id, _) in enumerate(bm25_hits, start=1):
-        if chunk_id:
-            fused_scores[chunk_id] = fused_scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+        fused[chunk_id] = fused.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank)
 
-    return fused_scores
+    return fused
 
 
 def hybrid_search(
@@ -134,45 +63,32 @@ def hybrid_search(
     query_vec: list[float],
     k: int,
 ) -> list[dict[str, Any]]:
-    """
-    Hybrid retrieval pipeline:
-    1) Dense search from Qdrant
-    2) BM25 search
-    3) RRF fusion
-    4) Reconstruct chunk from Qdrant payload when possible
-    5) Fallback to bm25_index['chunk_by_id']
 
-    Returns:
-        [
-            {
-                "chunk": {
-                    "chunk_id": str,
-                    "text": str,
-                    "candidate_id": str,
-                    "candidate_name": str,
-                    "section": str,
-                    "page_number": int,
-                },
-                "dense_score": float | None,
-                "bm25_score": float | None,
-                "hybrid_score": float,
-            }
-        ]
-    """
     if not query_text and not query_vec:
         return []
 
     try:
-        final_k = int(k)
+        k = int(k)
     except (TypeError, ValueError):
-        final_k = 5
+        k = 8
 
-    if final_k <= 0:
-        final_k = 5
+    if k <= 0:
+        k = 8
 
-    dense_topn = _get_cfg_int(cfg, "dense_topn", 20)
-    bm25_topn = _get_cfg_int(cfg, "bm25_topn", 20)
-    rrf_k = _get_cfg_int(cfg, "rrf_k", 60)
+    try:
+        dense_topn = int(getattr(cfg, "dense_topn", max(20, k * 3)))
+    except (TypeError, ValueError):
+        dense_topn = max(20, k * 3)
+
+    try:
+        bm25_topn = int(getattr(cfg, "bm25_topn", max(20, k * 3)))
+    except (TypeError, ValueError):
+        bm25_topn = max(20, k * 3)
+
+    try:
+        rrf_k = int(getattr(cfg, "rrf_k", 60))
+    except (TypeError, ValueError):
+        rrf_k = 60
 
     dense_hits = dense_search(
         client=client,
@@ -196,44 +112,68 @@ def hybrid_search(
         rrf_k=rrf_k,
     )
 
-    ranked = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:final_k]
+    ranked_ids = sorted(
+        fused_scores.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )[:k]
 
-    dense_payload_by_id = {
-        chunk_id: payload
-        for chunk_id, _, payload in dense_hits
-        if chunk_id and payload
-    }
-
-    dense_score_by_id = {
-        chunk_id: float(score)
-        for chunk_id, score, _ in dense_hits
-        if chunk_id
-    }
-
-    bm25_score_by_id = {
-        chunk_id: float(score)
-        for chunk_id, score in bm25_hits
-        if chunk_id
-    }
+    dense_payload_by_id = {chunk_id: payload for chunk_id, _, payload in dense_hits}
+    dense_score_by_id = {chunk_id: float(score) for chunk_id, score, _ in dense_hits}
+    bm25_score_by_id = {chunk_id: float(score) for chunk_id, score in bm25_hits}
 
     chunk_by_id = bm25_index.get("chunk_by_id", {})
 
-    results: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    results = []
 
-    for chunk_id, hybrid_score in ranked:
-        if not chunk_id or chunk_id in seen:
-            continue
+    for chunk_id, hybrid_score in ranked_ids:
 
         payload = dense_payload_by_id.get(chunk_id)
+        raw_chunk = payload if payload is not None else chunk_by_id.get(chunk_id)
 
-        if payload:
-            chunk = _payload_to_chunk(payload, fallback_chunk_id=chunk_id)
+        if raw_chunk is None:
+            continue
+
+        if isinstance(raw_chunk, dict):
+
+            try:
+                page_number = int(raw_chunk.get("page_number", raw_chunk.get("page", 0)))
+            except (TypeError, ValueError):
+                page_number = 0
+
+            chunk = {
+                "chunk_id": raw_chunk.get("chunk_id", chunk_id),
+                "text": str(raw_chunk.get("text", "")).strip(),
+                "candidate_id": str(raw_chunk.get("candidate_id", "")).strip(),
+                "candidate_name": str(
+                    raw_chunk.get("candidate_name")
+                    or raw_chunk.get("candidate")
+                    or ""
+                ).strip(),
+                "section": str(raw_chunk.get("section", "")).strip(),
+                "page_number": page_number,
+            }
+
         else:
-            raw_chunk = chunk_by_id.get(chunk_id)
-            if raw_chunk is None:
-                continue
-            chunk = _normalize_chunk(raw_chunk, fallback_chunk_id=chunk_id)
+
+            try:
+                page_number = int(
+                    getattr(raw_chunk, "page_number", getattr(raw_chunk, "page", 0))
+                )
+            except (TypeError, ValueError):
+                page_number = 0
+
+            chunk = {
+                "chunk_id": getattr(raw_chunk, "chunk_id", chunk_id),
+                "text": str(getattr(raw_chunk, "text", "")).strip(),
+                "candidate_id": str(getattr(raw_chunk, "candidate_id", "")).strip(),
+                "candidate_name": str(
+                    getattr(raw_chunk, "candidate_name", "")
+                    or getattr(raw_chunk, "candidate", "")
+                ).strip(),
+                "section": str(getattr(raw_chunk, "section", "")).strip(),
+                "page_number": page_number,
+            }
 
         results.append(
             {
@@ -243,6 +183,5 @@ def hybrid_search(
                 "hybrid_score": float(hybrid_score),
             }
         )
-        seen.add(chunk_id)
 
     return results

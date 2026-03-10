@@ -1,127 +1,83 @@
-import re
-from typing import Any
+from __future__ import annotations
 
+import re
+from typing import List, Optional, Tuple
+
+from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-_WORD_RE = re.compile(r"\w+")
 
 
-def tokenize(text: str) -> list[str]:
-    """
-    Lowercase word tokenizer for BM25.
-    """
-    return _WORD_RE.findall((text or "").lower())
+def normalize_text(text: str) -> str:
+    text = (text or "").lower().strip()
+    text = text.replace("/", " ")
+    text = text.replace("-", " ")
+    text = text.replace(".", " ")
+    text = text.replace('"', " ")
+    text = text.replace("'", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+def _tokenize(text: str) -> List[str]:
+    text = normalize_text(text)
+    return re.findall(r"[A-Za-z0-9_+#]+", text)
 
 
-def _get_field(item: Any, field_name: str, default: Any = None) -> Any:
-    """
-    Safely read a field from either:
-    - dict-like chunk
-    - object-like chunk
-    """
-    if isinstance(item, dict):
-        return item.get(field_name, default)
-    return getattr(item, field_name, default)
+def build_bm25_index(docs: List[Document]) -> BM25Okapi:
+    corpus = []
+    id_map = []
 
+    for i, doc in enumerate(docs):
+        candidate_name = str(doc.metadata.get("candidate_name", "")).strip()
+        section = str(doc.metadata.get("section", "")).strip()
+        text = str(doc.page_content or "").strip()
 
-def build_bm25_index(chunks: list[Any], text_field: str = "text") -> dict[str, Any]:
-    """
-    Build a BM25 index from generic chunk objects.
+        searchable_text = f"{candidate_name} {section} {text}".strip()
+        corpus.append(_tokenize(searchable_text))
 
-    Minimal required fields per chunk:
-    - chunk_id
-    - text (or custom text_field)
-
-    Returns:
-        {
-            "bm25": BM25Okapi | None,
-            "id_map": list[str],
-            "chunk_by_id": dict[str, Any],
-        }
-    """
-    if not chunks:
-        return {
-            "bm25": None,
-            "id_map": [],
-            "chunk_by_id": {},
-        }
-
-    corpus: list[list[str]] = []
-    id_map: list[str] = []
-    chunk_by_id: dict[str, Any] = {}
-
-    for chunk in chunks:
-        chunk_id = _get_field(chunk, "chunk_id", "")
-        text = _get_field(chunk, text_field, "")
-
+        chunk_id = str(doc.metadata.get("chunk_id", "")).strip()
         if not chunk_id:
-            continue
+            source_cv = str(doc.metadata.get("source_cv", "unknown")).strip() or "unknown"
+            chunk_id = f"{source_cv}:{section or 'general'}:c{i}"
 
-        tokens = tokenize(text)
-        corpus.append(tokens)
         id_map.append(chunk_id)
-        chunk_by_id[chunk_id] = chunk
 
-    if not corpus:
-        return {
-            "bm25": None,
-            "id_map": [],
-            "chunk_by_id": {},
-        }
-
-    return {
-        "bm25": BM25Okapi(corpus),
-        "id_map": id_map,
-        "chunk_by_id": chunk_by_id,
-    }
+    bm25 = BM25Okapi(corpus)
+    bm25.id_map = id_map
+    return bm25
 
 
-def bm25_search(index: dict[str, Any], query: str, topn: int = 20) -> list[tuple[str, float]]:
-    """
-    Search a pre-built BM25 index.
+def search_bm25(
+    bm25_index: BM25Okapi,
+    docs: List[Document],
+    query: str,
+    k: int,
+    allowed_indices: Optional[set] = None,
+) -> List[Tuple[Document, int]]:
+    tokens = _tokenize(query)
+    scores = bm25_index.get_scores(tokens)
+    id_map = getattr(bm25_index, "id_map", [])
 
-    Returns:
-        list of (chunk_id, score)
-    """
-    if not index or not query:
-        return []
+    candidates = [
+        (scores[i], i)
+        for i in range(len(docs))
+        if allowed_indices is None or i in allowed_indices
+    ]
+    candidates.sort(reverse=True)
 
-    bm25 = index.get("bm25")
-    id_map = index.get("id_map", [])
-
-    if bm25 is None or not id_map:
-        return []
-
-    query_tokens = tokenize(query)
-    if not query_tokens:
-        return []
-
-    try:
-        limit = int(topn)
-    except (TypeError, ValueError):
-        limit = 20
-
-    if limit <= 0:
-        limit = 20
-
-    scores = bm25.get_scores(query_tokens)
-    ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-
-    results: list[tuple[str, float]] = []
-    for idx in ranked_indices:
-        chunk_id = id_map[idx]
-        if not chunk_id:
-            continue
-
-        score = float(scores[idx])
-
-        # optional: skip fully non-relevant zero/negative scores
-        if score <= 0:
-            continue
-
-        results.append((chunk_id, score))
-
-        if len(results) >= limit:
-            break
+    results = []
+    for score, i in candidates[:k]:
+        doc = docs[i]
+        results.append((
+            Document(
+                page_content=doc.page_content,
+                metadata={
+                    **doc.metadata,
+                    "chunk_id": id_map[i] if i < len(id_map) else "",
+                    "bm25_score": float(score),
+                },
+            ),
+            i,
+        ))
 
     return results
