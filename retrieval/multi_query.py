@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List
 import os
 from dotenv import load_dotenv
+from textblob import TextBlob
 
 load_dotenv()
 
@@ -19,9 +20,11 @@ class MultiQueryResponse(BaseModel):
         description="List of semantically similar search queries generated from the user question."
     )
 
+def correct_spelling(text):
+    return str(TextBlob(text).correct())
 
 def generate_multi_queries(question, model="gpt-4.1-nano", num_queries=2):
-
+    question = correct_spelling(question)
     system_prompt = f"""
     You are an expert in search query generation for a Retrieval-Augmented Generation (RAG) system.
 
