@@ -6,29 +6,66 @@ import json
 from langchain_community.document_loaders import PyPDFLoader
 
 
-# Detect common CV headers
+# -------------------------------------------------
+# SECTION HEADER DETECTION
+# -------------------------------------------------
+
 HEADER_PATTERN = re.compile(
     r"^(SUMMARY|PROFESSIONAL SUMMARY|PROFILE|ABOUT ME|OBJECTIVE|CAREER OBJECTIVE|"
     r"EXPERIENCE|WORK EXPERIENCE|PROFESSIONAL EXPERIENCE|EMPLOYMENT HISTORY|WORK HISTORY|"
     r"EDUCATION|ACADEMIC BACKGROUND|EDUCATIONAL BACKGROUND|"
-    r"SKILLS|SOFT SKILLS|HARD SKILLS|TECHNICAL SKILLS|CORE SKILLS|KEY SKILLS|SKILL SET|COMPETENCIES|CORE COMPETENCIES|"
+    r"SKILLS|SOFT SKILLS|HARD SKILLS|TECHNICAL SKILLS|CORE SKILLS|KEY SKILLS|"
     r"PROJECTS|PERSONAL PROJECTS|ACADEMIC PROJECTS|PROJECT EXPERIENCE|"
     r"CERTIFICATIONS|LICENSES|CERTIFICATES|PROFESSIONAL CERTIFICATIONS|"
     r"PUBLICATIONS|RESEARCH|RESEARCH EXPERIENCE|"
-    r"ACHIEVEMENTS|KEY ACHIEVEMENTS|ACCOMPLISHMENTS|AWARDS|HONORS|"
+    r"ACHIEVEMENTS|ACCOMPLISHMENTS|AWARDS|HONORS|"
     r"LEADERSHIP|LEADERSHIP EXPERIENCE|"
-    r"VOLUNTEERING|VOLUNTEER EXPERIENCE|COMMUNITY SERVICE|"
-    r"INTERNSHIPS|INTERNSHIP EXPERIENCE|"
+    r"VOLUNTEERING|VOLUNTEER EXPERIENCE|"
+    r"INTERNSHIPS|TRAINING|TRAININGS|"
     r"LANGUAGES|LANGUAGE SKILLS|"
-    r"INTERESTS|HOBBIES|PASSIONS|EXTRACURRICULAR ACTIVITIES|"
-    r"PROFESSIONAL AFFILIATIONS|MEMBERSHIPS|"
+    r"INTERESTS|HOBBIES|PASSIONS|"
     r"REFERENCES)$",
     re.IGNORECASE
 )
 
 
-def split_into_sections(text):
+# -------------------------------------------------
+# CLEAN PDF TEXT
+# -------------------------------------------------
 
+def clean_text(text):
+
+    lines = text.split("\n")
+    cleaned = []
+    seen_links = set()
+
+    for line in lines:
+
+        line = line.strip()
+
+        if not line:
+            continue
+
+        # remove mailto / tel
+        line = re.sub(r"mailto:.*", "", line)
+        line = re.sub(r"tel:.*", "", line)
+
+        # remove duplicate links
+        if "http" in line or "github.com" in line or "linkedin.com" in line:
+            if line in seen_links:
+                continue
+            seen_links.add(line)
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+
+# -------------------------------------------------
+# SPLIT INTO SECTIONS
+# -------------------------------------------------
+
+def split_into_sections(text):
 
     sections = {}
     current_section = "general"
@@ -39,11 +76,12 @@ def split_into_sections(text):
         clean = line.strip()
 
         if HEADER_PATTERN.match(clean):
+
             current_section = clean.lower()
             sections[current_section] = []
 
         else:
-            sections[current_section].append(line)
+            sections[current_section].append(clean)
 
     return {
         sec: "\n".join(lines).strip()
@@ -51,55 +89,108 @@ def split_into_sections(text):
         if "\n".join(lines).strip()
     }
 
-def split_section_entries(section_text):
 
+# -------------------------------------------------
+# ENTRY TITLE DETECTION
+# -------------------------------------------------
+
+def is_entry_title(line):
+
+    if len(line) > 120:
+        return False
+
+    if re.search(r"\|", line):
+        return True
+
+    if re.search(r"( internship| engineer| developer| analyst| assistant)", line.lower()):
+        return True
+
+    if re.search(r"( project)", line.lower()):
+        return True
+
+    if re.search(r"( at )", line.lower()):
+        return True
+
+    return False
+
+
+# -------------------------------------------------
+# DATE DETECTION (to avoid splitting entries)
+# -------------------------------------------------
+
+def is_date_or_location(line):
+
+    if re.search(r"\d{4}", line):
+        return True
+
+    if re.search(r"(present)", line.lower()):
+        return True
+
+    if re.search(r"(cairo|egypt|city|village)", line.lower()):
+        return True
+
+    return False
+
+
+# -------------------------------------------------
+# SPLIT SECTIONS INTO ENTRIES
+# -------------------------------------------------
+
+def split_section_entries(section_text, section_name):
+
+    lines = [l.strip() for l in section_text.split("\n") if l.strip()]
+
+    section_name = section_name.lower()
+
+    # Sections that should stay ONE chunk
+    single_chunk_sections = [
+        "skills",
+        "languages",
+        "interests",
+        "hobbies",
+        "profile",
+        "summary"
+    ]
+
+    if section_name in single_chunk_sections:
+        return ["\n".join(lines)]
 
     entries = []
     buffer = []
 
-    lines = section_text.split("\n")
-
     for line in lines:
 
-        clean = line.strip()
-
-        if not clean:
-            if buffer:
-                entries.append("\n".join(buffer).strip())
-                buffer = []
+        # bullet points
+        if line.startswith(("•", "-", "*")):
+            buffer.append(line)
             continue
 
-        # bullet point
-        if clean.startswith(("•", "-", "*")):
-
-            bullet_text = clean.lstrip("•-* ").strip()
-
-            if bullet_text:
-                if buffer:
-                    entries.append("\n".join(buffer).strip())
-                    buffer = []
-
-                entries.append(bullet_text)
-
+        # date / location should stay with entry
+        if is_date_or_location(line):
+            buffer.append(line)
             continue
 
-        # detect job / entry titles (common CV patterns)
-        if re.search(r"( at | - | — | \| )", clean) and len(clean) < 120:
+        # new entry title
+        if is_entry_title(line):
+
             if buffer:
-                entries.append("\n".join(buffer).strip())
+                entries.append("\n".join(buffer))
                 buffer = []
 
-            entries.append(clean)
+            buffer.append(line)
             continue
 
-        buffer.append(clean)
+        buffer.append(line)
 
     if buffer:
-        entries.append("\n".join(buffer).strip())
+        entries.append("\n".join(buffer))
 
-    # remove very short noise chunks
-    return [e for e in entries if len(e) > 3]
+    return entries
 
+
+# -------------------------------------------------
+# MAIN PIPELINE
+# -------------------------------------------------
 
 def run_cv_rag_chunking(folder_path):
 
@@ -108,17 +199,17 @@ def run_cv_rag_chunking(folder_path):
     pdf_files = list(Path(folder_path).glob("*.pdf"))
 
     if not pdf_files:
-        print("⚠️ No PDFs found in folder.")
+        print("⚠️ No PDFs found.")
         return []
 
     for pdf_path in tqdm(pdf_files, desc="Processing CVs"):
-
-        print(f"📄 Processing: {pdf_path.name}")
 
         loader = PyPDFLoader(str(pdf_path))
         docs = loader.load()
 
         full_text = "\n".join([d.page_content for d in docs])
+
+        full_text = clean_text(full_text)
 
         sections = split_into_sections(full_text)
 
@@ -126,7 +217,7 @@ def run_cv_rag_chunking(folder_path):
 
         for section_name, section_text in sections.items():
 
-            entries = split_section_entries(section_text)
+            entries = split_section_entries(section_text, section_name)
 
             for entry in entries:
 
@@ -148,18 +239,23 @@ def run_cv_rag_chunking(folder_path):
     return all_chunks
 
 
+# -------------------------------------------------
+# SAVE JSON
+# -------------------------------------------------
+
 def save_chunks_to_json(chunks, output_file="cv_chunks.json"):
-    """
-    Save all chunks into a formatted JSON file.
-    """
 
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(chunks, f, indent=4, ensure_ascii=False)
 
-    print("\n✅ Chunks saved successfully!")
+    print("\n✅ Chunks saved")
     print(f"📁 File: {output_file}")
-    print(f"🧠 Total Chunks: {len(chunks)}")
+    print(f"🧠 Total chunks: {len(chunks)}")
 
+
+# -------------------------------------------------
+# RUN
+# -------------------------------------------------
 
 if __name__ == "__main__":
 
