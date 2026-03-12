@@ -296,6 +296,7 @@ def chunk_cv(
     pdf_path: str,
     lines: List[str],
     candidate_name: str,
+    file_hash: str = "",
 ) -> List[Document]:
     """
     Split a CV's extracted text lines into one Document per section.
@@ -308,10 +309,15 @@ def chunk_cv(
         pdf_path:       Source PDF path (stored in metadata).
         lines:          Text lines from ingestion/loader.load_pdf().
         candidate_name: From extract_candidate_name().
+        file_hash:      SHA-256 hex digest of the source PDF, from
+                        ingest.calculate_path_hash(). Stored in every
+                        chunk's metadata so the hash travels with the
+                        Document through the full pipeline — BM25 index,
+                        UI knowledge base viewer, and Qdrant payload.
 
     Returns:
         List of Documents — one per section — with metadata:
-            candidate_name, section, source_cv.
+            candidate_name, section, source_cv, file_hash.
     """
     header_lookup = detect_headers(pdf_path)
 
@@ -356,6 +362,7 @@ def chunk_cv(
                 "candidate_name": candidate_name,
                 "section":        section_label,
                 "source_cv":      pdf_path,
+                "file_hash":      file_hash
             },
         ))
 
