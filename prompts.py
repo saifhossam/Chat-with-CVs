@@ -17,7 +17,7 @@ If the user's question does not contain meaningful information related to candid
 
 Return ONLY valid JSON in this format:
 
-{
+{{
   "queries": ["query1", "query2"]
-}
+}}
 """

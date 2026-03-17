@@ -8,7 +8,7 @@ class MultiQueryResponse(BaseModel):
         description="List of semantically similar search queries generated from the user question."
     )
 
-def generate_multi_queries(question, model = LLM, num_queries=2):
+def generate_multi_queries(question: str,*,num_queries: int = 2,model: str = LLM,):
 
     system_prompt = query_generator_prompt.format(num_queries=num_queries)
 
