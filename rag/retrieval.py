@@ -68,7 +68,7 @@ def build_bm25_index(chunks: list[dict[str, Any]]) -> dict[str, Any]:
         candidate_name = str(chunk.get("candidate_name", "")).strip()
         section = str(chunk.get("section", "")).strip()
 
-        searchable_text = f"{candidate_name} {candidate_name} {section} {section} {text}".strip()
+        searchable_text = f"{candidate_name} {section}  {text}".strip()
         tokens = tokenize(searchable_text)
 
         if not chunk_id or not tokens:
@@ -168,10 +168,12 @@ def dense_search(
     response = qdrant_client.query_points(
         collection_name=COLLECTION,
         query=query_vec,
+        using="dense",
         limit=topn,
         with_payload=True,
         with_vectors=False,
         query_filter=query_filter,)
+    
 
     points = getattr(response, "points", None) or []
     results = []
