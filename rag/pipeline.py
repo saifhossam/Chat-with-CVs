@@ -69,15 +69,15 @@ if __name__ == "__main__":
     bm25_index = build_bm25_index(chunks)
 
     question = input("Ask a question: ").strip()
-    #candidate_name = input("Candidate name (optional): ").strip()
+    candidate_name = input("Candidate name (optional): ").strip()
 
-    #if not candidate_name:
-        #candidate_name = None
+    if not candidate_name:
+        candidate_name = None
 
     results = retrieve_pipeline(
         question=question,
         bm25_index=bm25_index,
-        #candidate_name=candidate_name,
+        candidate_name=candidate_name,
     )
 
     for item in results:
