@@ -1,0 +1,10 @@
+# ── Azure OpenAI ───────────────────────────────────────────
+AZURE_OPENAI_API_KEY=your_azure_api_key_here
+AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1-nano
+
+# ── Qdrant Cloud ───────────────────────────────────────────
+QDRANT_URL=https://your-cluster-id.region.aws.cloud.qdrant.io
+QDRANT_API_KEY=your_qdrant_api_key_here
+QDRANT_COLLECTION=cv_chunks

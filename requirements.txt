@@ -1,0 +1,35 @@
+# ── Web framework ──────────────────────────────────────────
+streamlit
+
+# ── Azure OpenAI ───────────────────────────────────────────
+openai
+
+# ── Qdrant ─────────────────────────────────────────────────
+qdrant-client[fastembed]
+
+# ── PDF processing ─────────────────────────────────────────
+pdfplumber
+docling
+
+# ── Embeddings & NER ───────────────────────────────────────
+sentence-transformers
+transformers
+torch
+
+# ── LangChain ──────────────────────────────────────────────
+langchain
+langchain-core
+langchain-community
+
+# ── Retrieval ──────────────────────────────────────────────
+rank-bm25
+faiss-cpu
+
+# ── Reranker ───────────────────────────────────────────────
+# CrossEncoder lives inside sentence-transformers — no extra package needed
+
+# ── Utilities ──────────────────────────────────────────────
+python-dotenv
+pydantic
+numpy
+tiktoken
