@@ -10,144 +10,9 @@ from sentence_transformers import util as st_util
 
 from docling.document_converter import DocumentConverter
 
-from config import azure_client, LLM
+from config import azure_client, LLM, KNOWN_SECTIONS, NER_MODEL, HEADERS_EMBEDDING_MODEL
 
 
-
-KNOWN_SECTIONS = [
-    # Personal / Introduction
-    "PROFILE", "ABOUT ME", "ABOUT", "PERSONAL PROFILE", "PERSONAL STATEMENT",
-    "PROFESSIONAL PROFILE", "PROFESSIONAL SUMMARY", "CAREER PROFILE",
-    "SUMMARY", "EXECUTIVE SUMMARY", "CAREER SUMMARY", "CAREER OBJECTIVE",
-    "OBJECTIVE", "PROFESSIONAL OBJECTIVE", "CAREER GOAL", "GOAL",
-    "INTRODUCTION", "OVERVIEW", "BIO", "BIOGRAPHY",
-
-    # Experience
-    "EXPERIENCE", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE",
-    "EMPLOYMENT HISTORY", "EMPLOYMENT", "WORK HISTORY",
-    "CAREER HISTORY", "CAREER EXPERIENCE", "RELEVANT EXPERIENCE",
-    "INDUSTRY EXPERIENCE", "FIELD EXPERIENCE", "INTERNSHIP EXPERIENCE",
-    "INTERNSHIP", "INTERNSHIPS", "VOLUNTEER EXPERIENCE", "VOLUNTEERING",
-    "COMMUNITY SERVICE", "SERVICE", "FREELANCE EXPERIENCE", "FREELANCE WORK",
-    "CONSULTING EXPERIENCE", "CONTRACT WORK", "TRAINING & INTERNSHIP"
-
-    # Education
-    "EDUCATION", "ACADEMIC BACKGROUND", "ACADEMIC HISTORY",
-    "EDUCATIONAL BACKGROUND", "EDUCATIONAL QUALIFICATIONS",
-    "QUALIFICATIONS", "ACADEMIC QUALIFICATIONS", "DEGREES",
-    "ACADEMIC ACHIEVEMENTS", "ACADEMIC TRAINING", "SCHOOLING",
-
-    # Skills
-    "SKILLS", "TECHNICAL SKILLS", "CORE SKILLS", "KEY SKILLS",
-    "PROFESSIONAL SKILLS", "SOFT SKILLS", "HARD SKILLS",
-    "TRANSFERABLE SKILLS", "INTERPERSONAL SKILLS", "COMMUNICATION SKILLS",
-    "COMPETENCIES", "CORE COMPETENCIES", "KEY COMPETENCIES",
-    "TECHNICAL COMPETENCIES", "AREAS OF EXPERTISE", "EXPERTISE",
-    "SPECIALIZATIONS", "SPECIALTIES", "ABILITIES", "STRENGTHS",
-    "CAPABILITIES", "SKILL SET", "TECHNICAL PROFICIENCIES", "PROFICIENCIES",
-    "TOOLS & TECHNOLOGIES", "TOOLS AND TECHNOLOGIES", "TECHNOLOGIES",
-    "TECHNOLOGY STACK", "TECH STACK",
-
-    # Projects
-    "PROJECTS", "PROJECT EXPERIENCE", "KEY PROJECTS", "NOTABLE PROJECTS",
-    "SELECTED PROJECTS", "PERSONAL PROJECTS", "ACADEMIC PROJECTS",
-    "RESEARCH PROJECTS", "PROFESSIONAL PROJECTS", "SIDE PROJECTS",
-    "PORTFOLIO", "WORK SAMPLES", "CASE STUDIES",
-
-    # Training & Courses
-    "TRAINING", "TRAINING & DEVELOPMENT", "TRAINING AND DEVELOPMENT",
-    "COURSES", "COURSEWORK", "RELEVANT COURSEWORK", "ONLINE COURSES",
-    "PROFESSIONAL DEVELOPMENT", "PROFESSIONAL TRAINING",
-    "WORKSHOPS", "SEMINARS", "BOOTCAMPS", "BOOTCAMP",
-
-    # Certifications & Licenses
-    "CERTIFICATIONS", "CERTIFICATION", "CERTIFICATES", "CERTIFICATE",
-    "PROFESSIONAL CERTIFICATIONS", "TECHNICAL CERTIFICATIONS",
-    "LICENSES", "LICENSE", "LICENSES & CERTIFICATIONS",
-    "ACCREDITATIONS", "CREDENTIALS", "PROFESSIONAL CREDENTIALS",
-    "DESIGNATIONS", "PROFESSIONAL LICENSES",
-
-    # Languages
-    "LANGUAGES", "LANGUAGE SKILLS", "SPOKEN LANGUAGES",
-    "FOREIGN LANGUAGES", "LANGUAGE PROFICIENCY", "LINGUISTIC SKILLS",
-
-    # Publications & Research
-    "PUBLICATIONS", "PUBLISHED WORKS", "RESEARCH",
-    "RESEARCH EXPERIENCE", "RESEARCH & PUBLICATIONS",
-    "PAPERS", "JOURNAL ARTICLES", "CONFERENCE PAPERS",
-    "PRESENTATIONS", "CONFERENCE PRESENTATIONS", "TALKS",
-    "POSTERS", "THESIS", "DISSERTATION",
-
-    # Awards & Recognition
-    "AWARDS", "HONORS", "HONOURS", "AWARDS & HONORS",
-    "AWARDS & HONOURS", "ACHIEVEMENTS", "ACCOMPLISHMENTS",
-    "RECOGNITION", "NOTABLE ACHIEVEMENTS", "KEY ACHIEVEMENTS",
-    "DISTINCTIONS", "SCHOLARSHIPS", "FELLOWSHIPS",
-    "GRANTS", "PRIZES",
-
-    # Leadership & Activities
-    "LEADERSHIP", "LEADERSHIP EXPERIENCE", "LEADERSHIP & ACTIVITIES",
-    "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR",
-    "ACTIVITIES", "CLUBS & ACTIVITIES", "STUDENT ACTIVITIES",
-    "ORGANIZATIONS", "PROFESSIONAL ORGANIZATIONS",
-    "AFFILIATIONS", "PROFESSIONAL AFFILIATIONS",
-    "MEMBERSHIPS", "PROFESSIONAL MEMBERSHIPS",
-    "ASSOCIATIONS", "PROFESSIONAL ASSOCIATIONS",
-
-    # Volunteering / Social
-    "VOLUNTEER WORK", "VOLUNTEERING", "COMMUNITY INVOLVEMENT",
-    "CIVIC ENGAGEMENT", "SOCIAL IMPACT", "SOCIAL WORK",
-    "NON-PROFIT EXPERIENCE", "NGO EXPERIENCE",
-
-    # References
-    "REFERENCES", "PROFESSIONAL REFERENCES", "REFEREES",
-    "REFERENCES AVAILABLE UPON REQUEST",
-
-    # Technical / Engineering / IT specific
-    "PROGRAMMING LANGUAGES", "FRAMEWORKS", "LIBRARIES",
-    "DATABASES", "OPERATING SYSTEMS", "PLATFORMS",
-    "DEVOPS", "CLOUD PLATFORMS", "SOFTWARE",
-    "HARDWARE", "LABORATORY SKILLS", "LAB SKILLS",
-
-    # Creative / Design specific
-    "DESIGN SKILLS", "CREATIVE SKILLS", "CREATIVE PORTFOLIO",
-    "EXHIBITIONS", "EXHIBITIONS & SHOWS", "COLLECTIONS",
-    "COMMISSIONS", "ART INSTALLATIONS",
-
-    # Medical / Healthcare specific
-    "CLINICAL EXPERIENCE", "CLINICAL ROTATIONS", "ROTATIONS",
-    "MEDICAL TRAINING", "RESIDENCY", "FELLOWSHIPS",
-    "PROCEDURES", "CLINICAL SKILLS",
-
-    # Legal specific
-    "BAR ADMISSIONS", "COURT ADMISSIONS", "LEGAL EXPERIENCE",
-    "CASES", "LEGAL PUBLICATIONS",
-
-    # Academic / Teaching specific
-    "TEACHING EXPERIENCE", "TEACHING", "COURSES TAUGHT",
-    "ACADEMIC APPOINTMENTS", "APPOINTMENTS",
-    "ACADEMIC SERVICE", "GRANTS & FUNDING",
-    "EDITORIAL ROLES", "REVIEWING",
-
-    # Business / Finance specific
-    "BUSINESS DEVELOPMENT", "KEY ACCOUNTS", "CLIENTS",
-    "PORTFOLIO MANAGEMENT", "FINANCIAL SKILLS",
-
-    # Military / Government
-    "MILITARY SERVICE", "MILITARY EXPERIENCE",
-    "SECURITY CLEARANCE", "CLEARANCES", "MILITARY STATUS",
-
-    # Miscellaneous
-    "INTERESTS", "HOBBIES", "PERSONAL INTERESTS",
-    "HOBBIES & INTERESTS", "PASSIONS",
-    "ADDITIONAL INFORMATION", "ADDITIONAL SKILLS",
-    "OTHER INFORMATION", "OTHER SKILLS", "OTHER",
-    "CONTACT", "CONTACT INFORMATION", "PERSONAL DETAILS",
-    "PERSONAL INFORMATION",
-]
-
-
-HEADERS_EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 
 _classifier_model      = None
 _classifier_embeddings = None
@@ -238,42 +103,95 @@ def detect_headers(pdf_path: str) -> Dict[str, str]:
 # CANDIDATE NAME EXTRACTION via LLM
 # =============================================================================
 
+# def extract_candidate_name(lines: List[str]) -> str:
+#     """
+#     Extract the candidate's full name from the first 50 lines of a CV
+#     using the Azure OpenAI LLM defined in config.py.
+
+#     Falls back to 'Unknown Candidate' if the LLM cannot identify a name.
+#     """
+#     header_text = "\n".join(lines[:50])
+
+#     try:
+#         response = azure_client.chat.completions.create(
+#             model=LLM,
+#             messages=[
+#                 {
+#                     "role": "system",
+#                     "content": (
+#                         "You are a CV parser. Extract the full name of the candidate "
+#                         "from the top of the CV text provided. "
+#                         "Return ONLY the full name — no explanation, no punctuation, "
+#                         "no extra words. If you cannot find a name, return exactly: "
+#                         "Unknown Candidate"
+#                     ),
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": header_text,
+#                 },
+#             ],
+#             temperature=0,
+#             max_tokens=20,
+#         )
+#         name = response.choices[0].message.content.strip()
+#         return name if name else "Unknown Candidate"
+
+#     except Exception:
+#         return "Unknown Candidate"
+
+
+# =============================================================================
+# CANDIDATE NAME EXTRACTION via NER
+# =============================================================================
+
+_ner_pipeline = None
+
+
+def _get_ner():
+    global _ner_pipeline
+    if _ner_pipeline is None:
+        _ner_pipeline = hf_pipeline(
+            "ner",
+            model=NER_MODEL,
+            aggregation_strategy="simple",
+        )
+    return _ner_pipeline
+
+
 def extract_candidate_name(lines: List[str]) -> str:
     """
-    Extract the candidate's full name from the first 50 lines of a CV
-    using the Azure OpenAI LLM defined in config.py.
+    Extract the candidate's full name from the first lines of a CV via NER.
 
-    Falls back to 'Unknown Candidate' if the LLM cannot identify a name.
+    Runs on the first 30 lines (name is always near the top). Requires
+    at least 2 tokens (first + last name). Falls back to 'Unknown Candidate'.
     """
-    header_text = "\n".join(lines[:50])
+    ner    = _get_ner()
+    # Strip emails, URLs, phones so NER focuses on the name
+    header = " ".join(lines[:30])
+    header = re.sub(r"\S+@\S+", " ", header)
+    header = re.sub(r"http\S+|www\S+|\S*\.com\S+", " ", header)
+    header = re.sub(r"\+?\d[\d\s\-]{7,}", " ", header)
 
-    try:
-        response = azure_client.chat.completions.create(
-            model=LLM,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a CV parser. Extract the full name of the candidate "
-                        "from the top of the CV text provided. "
-                        "Return ONLY the full name — no explanation, no punctuation, "
-                        "no extra words. If you cannot find a name, return exactly: "
-                        "Unknown Candidate"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": header_text,
-                },
-            ],
-            temperature=0,
-            max_tokens=20,
-        )
-        name = response.choices[0].message.content.strip()
-        return name if name else "Unknown Candidate"
+    entities   = ner(header[:500], aggregation_strategy="simple")
+    candidates = []
+    for e in entities:
+        if e["entity_group"] != "PER":
+            continue
+        name = e["word"].strip()
+        if len(name.split()) < 2:
+            continue
+        score = e.get("score", 0)
+        if name.islower():
+            score -= 0.2
+        score += max(0, (500 - e.get("start", 500)) / 500)
+        candidates.append((score, name))
 
-    except Exception:
+    if not candidates:
         return "Unknown Candidate"
+
+    candidates.sort(reverse=True)
+    return candidates[0][1]
 
 
 # =============================================================================
