@@ -204,7 +204,7 @@ def rrf_fuse(
 def hybrid_search(
     query_text:     str,
     bm25_index:     dict[str, Any],
-    k:              int = 8,
+    k:              int = 15,
     dense_topn:     int = 20,
     bm25_topn:      int = 20,
     rrf_k:          int = 60,

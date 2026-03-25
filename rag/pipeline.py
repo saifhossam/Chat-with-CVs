@@ -4,7 +4,7 @@ from .retrieval import load_chunks_from_qdrant, build_bm25_index, hybrid_search
 
 reranker = CrossEncoder("BAAI/bge-reranker-base",  device="cpu")
 
-def rerank(query, results, top_k=5):
+def rerank(query, results, top_k=10):
     if not results:
         return []
 
@@ -38,8 +38,8 @@ def retrieve_pipeline(
     bm25_index: dict,
     candidate_name: str | None = None,
     num_queries: int = 2,
-    per_query_k: int = 8,
-    final_top_k: int = 5,
+    per_query_k: int = 10,
+    final_top_k: int = 10,
     rerank_pool_size: int = 20,
 ) -> list[dict]:
     queries = generate_multi_queries(question, num_queries=num_queries)
